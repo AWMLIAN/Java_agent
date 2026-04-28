@@ -148,7 +148,7 @@ public class AgentServiceImpl implements AgentService {
         if(aiConversation==null){
             aiConversation=new AiConversation();
             aiConversation.setStatus((byte)1);
-            aiConversation.setUserId(userId);//TODO暂时为1
+            aiConversation.setUserId(userId);
             aiConversation.setTitle("新对话");
             aiConversation.setThreadId(threadId);
             aiConversation.setCreateTime(new Date());
