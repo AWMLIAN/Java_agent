@@ -7,15 +7,13 @@ import org.springframework.security.core.userdetails.UserDetails;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
-
 @Data
 public class AdminUserDetails implements UserDetails {
     //后台用户
     private final UmsAdmin umsAdmin;
 
-    public AdminUserDetails(UmsAdmin umsAdmin, UmsAdmin umsAdmin1){
-        this.umsAdmin = umsAdmin1;
+    public AdminUserDetails(UmsAdmin umsAdmin){
+        this.umsAdmin = umsAdmin;
     }
     //暂时为空后面填权限
     @Override

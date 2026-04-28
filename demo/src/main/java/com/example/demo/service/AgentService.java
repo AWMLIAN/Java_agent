@@ -23,7 +23,7 @@ public interface AgentService {
      * 找到已创建地会话
      * @prams threadId
      */
-    public AiConversation findOrCreateConversation(String threadId);
+    public AiConversation findOrCreateConversation(String threadId,Long userId);
 
     /**
      * 保存AI 消息

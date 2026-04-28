@@ -27,6 +27,6 @@ langchain4j:
 
 jwt:
   tokenHeader: Authorization #JWT存储的请求头
-  secret: mall-admin-secret #JWT加解密使用的密钥
+  secret: bXlfamF2YV9hZ2VudF9teV9qYXZhX2FnZW50 #JWT加解密使用的密钥 my_java_agent_my_java_agent
   expiration: 604800 #JWT的超期限时间(60*60*24*7)
   tokenHead: 'Bearer '  #JWT负载中拿到开头

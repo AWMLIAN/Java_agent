@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.demo.mapper.AiConversationMapper;
 import com.example.demo.mapper.AiMessageMapper;
 import com.example.demo.mapper.AiToolLogMapper;
+import com.example.demo.model.bo.AdminUserDetails;
 import com.example.demo.model.entity.AiConversation;
 import com.example.demo.model.entity.AiToolLog;
 import com.example.demo.service.AgentService;
@@ -13,15 +14,15 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.ToolExecutionResultMessage;
-import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.data.message.*;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -74,10 +75,16 @@ public class AgentServiceImpl implements AgentService {
 
     @Override
     public String chat(String threadId, String userMessage) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        Long userId=1L;
+        if(auth!=null&& auth.getPrincipal() instanceof AdminUserDetails){
+            userId = ((AdminUserDetails) auth.getPrincipal()).getUmsAdmin().getId();
+        }
         //1.创建会话记录
-        AiConversation conversation = findOrCreateConversation(threadId);
+        AiConversation conversation = findOrCreateConversation(threadId,userId);
         //2.获取该thread消息历史
         List<ChatMessage> chatMessages = loadHistoryMessage(conversation.getId());
+        chatMessages.add(0, SystemMessage.from("你是商城助手，当前用户ID是 " + userId + "。"));
         chatMessages.add(UserMessage.from(userMessage));
         //保存用户信息
         saveUserMessage(conversation.getId(),userMessage);
@@ -134,14 +141,14 @@ public class AgentServiceImpl implements AgentService {
     }
 
     @Override
-    public AiConversation findOrCreateConversation(String threadId) {
+    public AiConversation findOrCreateConversation(String threadId,Long userId) {
         AiConversation aiConversation = aiConversationMapper.selectOne(
                 new LambdaQueryWrapper<AiConversation>().eq(AiConversation::getThreadId, threadId)
         );
         if(aiConversation==null){
             aiConversation=new AiConversation();
             aiConversation.setStatus((byte)1);
-            aiConversation.setUserId(1L);//TODO暂时为1
+            aiConversation.setUserId(userId);//TODO暂时为1
             aiConversation.setTitle("新对话");
             aiConversation.setThreadId(threadId);
             aiConversation.setCreateTime(new Date());
