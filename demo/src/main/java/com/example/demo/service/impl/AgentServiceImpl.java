@@ -1,6 +1,8 @@
 package com.example.demo.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.demo.component.ToolExecutor;
+import com.example.demo.component.ToolResult;
 import com.example.demo.mapper.AiConversationMapper;
 import com.example.demo.mapper.AiMessageMapper;
 import com.example.demo.mapper.AiToolLogMapper;
@@ -18,16 +20,25 @@ import dev.langchain4j.data.message.*;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.model.output.TokenUsage;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
 @Service
@@ -40,18 +51,23 @@ public class AgentServiceImpl implements AgentService {
     private AiMessageMapper aiMessageMapper;
     @Autowired
     private AiToolLogMapper aiToolLogMapper;
-
     //工具实例,方法名——>类映射
     private final Map<String,Object> toolInstances=new HashMap<>();
     //工具定义列表，描述提供了什么工具
     private final List<ToolSpecification> toolSpecifications=new ArrayList<>();
+    //工具执行器
+    @Autowired
+    private ToolExecutor toolExecutor;
     @Autowired
     private ObjectMapper objectMapper;
+    //请求级锁
+    private final ConcurrentHashMap<String, RefCountedLock> threadLocks = new ConcurrentHashMap<>();
 
     public AgentServiceImpl(SearchProductTool searchProductTool, QueryOrdersTool ordersTool){
         registerTool(searchProductTool);
         registerTool(ordersTool);
     }
+
 
     //将所有工具声名刀 toolSpecifications
     //将所有工具方法，建立方法名到类的映射
@@ -75,69 +91,91 @@ public class AgentServiceImpl implements AgentService {
 
     @Override
     public String chat(String threadId, String userMessage) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Long userId=1L;
-        if(auth!=null&& auth.getPrincipal() instanceof AdminUserDetails){
-            userId = ((AdminUserDetails) auth.getPrincipal()).getUmsAdmin().getId();
-        }
-        //1.创建会话记录
-        AiConversation conversation = findOrCreateConversation(threadId,userId);
-        //2.获取该thread消息历史
-        List<ChatMessage> chatMessages = loadHistoryMessage(conversation.getId());
-        chatMessages.add(0, SystemMessage.from("你是商城助手，当前用户ID是 " + userId + "。"));
-        chatMessages.add(UserMessage.from(userMessage));
-        //保存用户信息
-        saveUserMessage(conversation.getId(),userMessage);
-
-        //3.ReAct循环 : 推理+执行
-        int maxIteration=5;
-        for(int i=0;i<maxIteration;i++){
-            //构建消息请求，
-            ChatRequest chatRequest = ChatRequest.builder()
-                    .messages(chatMessages)
-                    .toolSpecifications(toolSpecifications)
-                    .build();
-            //发送请求并获取响应
-            ChatResponse chatResponse= chatModel.chat(chatRequest);
-            AiMessage aiMessage = chatResponse.aiMessage();
-            chatMessages.add(aiMessage);
-            //保存 assistant 消息到数据库
-            saveAiMessage(conversation.getId(),aiMessage);
-//          //没有工具调用，直接返回文本
-            if(!aiMessage.hasToolExecutionRequests()){
-                return aiMessage.text();
+        String traceId="smartmall-"+UUID.randomUUID().toString().substring(0,8);
+        RefCountedLock refLock=threadLocks.compute(threadId,(key,existing)->{
+            if(existing==null){
+                return new RefCountedLock();
+            }else{
+                existing.retain();
+                return existing;
             }
-            //处理每一个工具调用
-            for(ToolExecutionRequest request:aiMessage.toolExecutionRequests()){
-                String name = request.name();
-                String arguments = request.arguments();
-                Object toolInstance = toolInstances.get(name);
-                if(toolInstance==null){
-                    ToolExecutionResultMessage errorMsg = ToolExecutionResultMessage.from(request, "错误：未知工具" + name);
-                    chatMessages.add(errorMsg);
-                    saveToolMessage(conversation.getId(),request,errorMsg.text(),false,null);
-                    continue;
-                }
-                //执行工具，捕获异常
-                long start = System.currentTimeMillis();
+        });
+        ReentrantLock lock = refLock.getLock();
+        lock.lock();
+        try{
+            log.info("[{}] RequestStart threadId={} message={}",traceId,threadId,userMessage);
+            Long userId=getUserId();
+            //1.创建会话记录
+            AiConversation conversation = findOrCreateConversation(threadId,userId);
+            //2.获取该thread消息历史
+            List<ChatMessage> chatMessages = loadHistoryMessage(conversation.getId());
+            chatMessages.add(0, SystemMessage.from("你是商城助手，当前用户ID是 " + userId + "。"));
+            chatMessages.add(UserMessage.from(userMessage));
+            //保存用户信息
+            saveUserMessage(conversation.getId(),userMessage);
+
+            //3.ReAct循环 : 推理+执行
+            int maxIteration=5;
+            for(int i=0;i<maxIteration;i++){
+                //构建消息请求，
+                ChatRequest chatRequest = ChatRequest.builder()
+                        .messages(chatMessages)
+                        .toolSpecifications(toolSpecifications)
+                        .build();
+                //发送请求并获取响应
+                ChatResponse chatResponse;
                 try{
-                    Method method = toolInstance.getClass().getMethod(name, String.class)/* 参数类型暂按具体实现调整 */;
-                    String result = method.invoke(toolInstance, arguments).toString();
-                    ToolExecutionResultMessage toolResult = ToolExecutionResultMessage.from(request, result);
-                    chatMessages.add(toolResult);
-                    long timeMs = System.currentTimeMillis() - start;
-                    saveToolMessage(conversation.getId(),request,result,true,timeMs);
-
+                    chatResponse=chatModel.chat(chatRequest);
                 }catch (Exception e){
-                    String errorContent="工具执行错误"+e.getMessage();
-                    ToolExecutionResultMessage errorResult=ToolExecutionResultMessage.from(request,errorContent);
-                    chatMessages.add(errorResult);
-                    long timeMs=System.currentTimeMillis()-start;
-                    saveToolMessage(conversation.getId(),request,errorContent,false,timeMs);
+                    log.error("[{}] LLMCallFailed error={}",traceId,e.getMessage());
+                    return "AI 服务暂时不可用，请稍后重试";
+                }
+                AiMessage aiMessage = chatResponse.aiMessage();
+                chatMessages.add(aiMessage);
+                //保存 assistant 消息到数据库
+                saveAiMessage(conversation.getId(),aiMessage);
+                //没有工具调用，直接返回文本
+                if(!aiMessage.hasToolExecutionRequests()){
+                    TokenUsage tokenUsage = chatResponse.tokenUsage();
+                    log.info("[{}] RequestEnd result=success token={}/{} total={}",
+                            traceId,
+                            tokenUsage.inputTokenCount(),
+                            tokenUsage.outputTokenCount(),
+                            tokenUsage.totalTokenCount()
+                    );
+                    return aiMessage.text();
+                }
+                List<ToolExecutionRequest> requests = aiMessage.toolExecutionRequests();
+                log.info("[{}] ToolCallStart count={} tools={}",traceId,requests.size(),requests.stream().map(ToolExecutionRequest::name).toList());
+                //并发执行
+                List<ToolResult> toolResults = toolExecutor.execute(requests, toolInstances, traceId);
+                for (ToolResult toolResult : toolResults) {
+                    chatMessages.add(toolResult.getMessage());
+                    // 按 toolCallId 找到对应的原始请求
+                    ToolExecutionRequest matchedReq = requests.stream()
+                            .filter(r -> r.id().equals(toolResult.getToolCallId()))
+                            .findFirst()
+                            .orElse(null);
+                    saveToolMessage(conversation.getId(),
+                            matchedReq != null ? matchedReq : ToolExecutionRequest.builder()
+                                    .id(toolResult.getToolCallId()).name("").arguments("").build(),
+                            toolResult.getMessage().text(),
+                            toolResult.isSuccess(),
+                            toolResult.getTimeMs());
                 }
             }
+            log.warn("[{}] MaxIterationReached",traceId);
+            return "抱歉，处理超时，请稍后再试。";
+        }finally {
+            lock.unlock();
+            //原子释放+安全移除
+            threadLocks.compute(threadId, (key, existing) -> {
+                if (existing != null && existing.release()) {
+                    return null;   // 计数归零，移除条目
+                }
+                return existing;   // 保持原样
+            });
         }
-        return "抱歉，我暂时无法完成您的请求。";
     }
 
     @Override
@@ -242,6 +280,7 @@ public class AgentServiceImpl implements AgentService {
         log.setResponseData(content);
         log.setSuccess((byte) (success ? 1 : 0));
         if (!success) log.setErrorMsg(content);
+        log.setCreateTime(new Date());
         log.setExecuteTimeMs(timeMs != null ? timeMs.intValue() : null);
         aiToolLogMapper.insert(log);
     }
@@ -293,4 +332,26 @@ public class AgentServiceImpl implements AgentService {
             return null;
         }
     }
+    private Long getUserId(){
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if(auth!=null&& auth.getPrincipal() instanceof AdminUserDetails){
+            return ((AdminUserDetails) auth.getPrincipal()).getUmsAdmin().getId();
+        }
+        return null;
+    }
+    private static class RefCountedLock{
+        @Getter
+        private final ReentrantLock lock = new ReentrantLock();
+        private final AtomicInteger refCount = new AtomicInteger(1); // 创建时计数为1
+
+        public void retain() {
+            refCount.incrementAndGet();
+        }
+
+        public boolean release() {
+            return refCount.decrementAndGet() == 0; // 返回true表示计数归零
+        }
+
+    }
+
 }

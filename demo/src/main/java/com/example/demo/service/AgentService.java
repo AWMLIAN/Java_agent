@@ -4,11 +4,11 @@ import com.example.demo.model.entity.AiConversation;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
 public interface AgentService {
-
     /**
      * 注册工具
      */

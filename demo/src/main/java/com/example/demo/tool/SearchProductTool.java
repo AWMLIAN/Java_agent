@@ -26,6 +26,7 @@ public class SearchProductTool {
             "例如：{\"keyword\":\"手机\",\"minPrice\":100.0,\"maxPrice\":5000.0}。返回符合条件的前10个商品。")
     public String searchProducts(String argument){
         try {
+            Thread.sleep(2000);
             Map<String,Object> params = objectMapper.readValue(argument, Map.class);
             String keyword = (String) params.get("keyword");
             Double minPrice = params.get("minPrice") != null ? ((Number) params.get("minPrice")).doubleValue() : null;

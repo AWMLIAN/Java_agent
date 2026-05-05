@@ -28,6 +28,7 @@ public class QueryOrdersTool {
             "例如：{\"userId\":1,\"limit\":3}。返回订单列表。")
     public String queryRecentOrders(String arguments){
         try {
+            Thread.sleep(2000);
             Map<String,Object> params = objectMapper.readValue(arguments, Map.class);
             long userId;
             Object userIdObj = params.get("userId");
