@@ -36,7 +36,7 @@ public interface AgentService {
     /**
      * 保存工具消息
      */
-    public void saveToolMessage(Long conversationId, ToolExecutionRequest request,String content,boolean success,Long timeMs);
+    public void saveToolMessage(Long conversationId, ToolExecutionRequest request,String aiMessageContent,String toolLogRawData,boolean success,Long timeMs);
     /**
      * 加载会话全部消息
      */

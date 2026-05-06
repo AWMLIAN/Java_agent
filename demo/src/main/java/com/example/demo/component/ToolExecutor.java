@@ -47,7 +47,7 @@ public class ToolExecutor {
         //使用LinkedList 保留原始顺序
         Map<String, CompletableFuture<ToolResult>> futureMap=new LinkedHashMap<>();
         //future 级去重映射，同一请求
-        Map<String,CompletableFuture<ToolResult>> futureByCacheKey=new ConcurrentHashMap<>();
+        Map<String,CompletableFuture<ToolResult>> futureByCacheKey=new HashMap<>();
         //工具id 到 工具名的映射
         Map<String, String> toolNameMap = new HashMap<>();
         for(ToolExecutionRequest req:requests){

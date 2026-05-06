@@ -2,25 +2,21 @@ package com.example.demo.tool;
 
 import com.example.demo.model.entity.OmsOrder;
 import com.example.demo.service.OrderService;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-
-import static net.sf.jsqlparser.parser.feature.Feature.limit;
 
 @Component
 public class QueryOrdersTool {
 
     @Autowired
     private OrderService orderService;
-    private final String EMPTY_ORDERS="没有找到订单";
     @Autowired
     private ObjectMapper objectMapper;
 
@@ -28,7 +24,7 @@ public class QueryOrdersTool {
             "例如：{\"userId\":1,\"limit\":3}。返回订单列表。")
     public String queryRecentOrders(String arguments){
         try {
-            Thread.sleep(2000);
+//            Thread.sleep(2000);
             Map<String,Object> params = objectMapper.readValue(arguments, Map.class);
             long userId;
             Object userIdObj = params.get("userId");
@@ -50,13 +46,19 @@ public class QueryOrdersTool {
             }
             List<OmsOrder> omsOrders = orderService.queryRecentOrders(userId, limit);
             if(omsOrders.isEmpty()){
-                return EMPTY_ORDERS;
+                return "[]";
             }
-            return omsOrders.stream()
-                    .map(o -> String.format("订单ID:%d, 订单号:%s, 金额:%.2f, 状态:%d, 时间:%s",
-                            o.getId(), o.getOrderSn(), o.getTotalAmount(), o.getStatus(),
-                            o.getCreateTime().toString()))
-                    .collect(Collectors.joining("\n"));
+            //转为Json 数组
+            List<Map<String, Object>> jsonList = omsOrders.stream().map(o -> {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("id", o.getId());
+                map.put("orderSn", o.getOrderSn());
+                map.put("totalAmount", o.getTotalAmount());
+                map.put("status", o.getStatus());
+                map.put("createTime", o.getCreateTime().toString());
+                return map;
+            }).collect(Collectors.toList());
+            return objectMapper.writeValueAsString(jsonList);
         } catch (Exception e) {
             return "工具执行错误: "+e.getMessage();
         }

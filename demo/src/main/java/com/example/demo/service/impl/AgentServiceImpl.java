@@ -1,8 +1,8 @@
 package com.example.demo.service.impl;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.demo.component.ToolExecutor;
 import com.example.demo.component.ToolResult;
+import com.example.demo.component.ToolResultProcessor;
 import com.example.demo.mapper.AiConversationMapper;
 import com.example.demo.mapper.AiMessageMapper;
 import com.example.demo.mapper.AiToolLogMapper;
@@ -20,7 +20,6 @@ import dev.langchain4j.data.message.*;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.model.output.TokenUsage;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -29,14 +28,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -60,6 +54,8 @@ public class AgentServiceImpl implements AgentService {
     private ToolExecutor toolExecutor;
     @Autowired
     private ObjectMapper objectMapper;
+    @Autowired
+    private ToolResultProcessor resultProcessor;
     //请求级锁
     private final ConcurrentHashMap<String, RefCountedLock> threadLocks = new ConcurrentHashMap<>();
 
@@ -150,7 +146,14 @@ public class AgentServiceImpl implements AgentService {
                 //并发执行
                 List<ToolResult> toolResults = toolExecutor.execute(requests, toolInstances, traceId);
                 for (ToolResult toolResult : toolResults) {
-                    chatMessages.add(toolResult.getMessage());
+                    String originalText = toolResult.getMessage().text();
+                    String processedText = resultProcessor.process(toolResult.getMessage().toolName(), originalText);
+                    ToolExecutionResultMessage processMsg = ToolExecutionResultMessage.from(
+                            toolResult.getToolCallId(),
+                            toolResult.getMessage().toolName(),
+                            processedText
+                    );
+                    chatMessages.add(processMsg);
                     // 按 toolCallId 找到对应的原始请求
                     ToolExecutionRequest matchedReq = requests.stream()
                             .filter(r -> r.id().equals(toolResult.getToolCallId()))
@@ -159,7 +162,8 @@ public class AgentServiceImpl implements AgentService {
                     saveToolMessage(conversation.getId(),
                             matchedReq != null ? matchedReq : ToolExecutionRequest.builder()
                                     .id(toolResult.getToolCallId()).name("").arguments("").build(),
-                            toolResult.getMessage().text(),
+                            processedText,
+                            originalText,
                             toolResult.isSuccess(),
                             toolResult.getTimeMs());
                 }
@@ -263,11 +267,11 @@ public class AgentServiceImpl implements AgentService {
     }
 
     @Override
-    public void saveToolMessage(Long conversationId, ToolExecutionRequest request, String content, boolean success, Long timeMs) {
+    public void saveToolMessage(Long conversationId, ToolExecutionRequest request, String aiMessageContent,String toolLogRawData, boolean success, Long timeMs) {
         com.example.demo.model.entity.AiMessage aiMessage=new com.example.demo.model.entity.AiMessage();
         aiMessage.setConversationId(conversationId);
         aiMessage.setRole("tool");
-        aiMessage.setContent(content);
+        aiMessage.setContent(aiMessageContent);//摘要
         aiMessage.setToolName(request.name());
         aiMessage.setToolCallId(request.id());
         aiMessage.setCreateTime(new Date());
@@ -277,9 +281,9 @@ public class AgentServiceImpl implements AgentService {
         log.setMessageId(aiMessage.getId());
         log.setToolName(request.name());
         log.setRequestParams(request.arguments());
-        log.setResponseData(content);
+        log.setResponseData(toolLogRawData);
         log.setSuccess((byte) (success ? 1 : 0));
-        if (!success) log.setErrorMsg(content);
+        if (!success) log.setErrorMsg(aiMessageContent);
         log.setCreateTime(new Date());
         log.setExecuteTimeMs(timeMs != null ? timeMs.intValue() : null);
         aiToolLogMapper.insert(log);
