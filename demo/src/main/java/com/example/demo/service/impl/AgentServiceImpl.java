@@ -56,8 +56,12 @@ public class AgentServiceImpl implements AgentService {
     private ObjectMapper objectMapper;
     @Autowired
     private ToolResultProcessor resultProcessor;
+    @Autowired
+    private MemoryCompressorServiceImpl memoryCompressorService;
     //请求级锁
     private final ConcurrentHashMap<String, RefCountedLock> threadLocks = new ConcurrentHashMap<>();
+    // 约 179,200 字符，作为触发压缩的字符阈值
+    private static final int MAX_CHARS = 500;//128_000 * 2 * 70 / 100
 
     public AgentServiceImpl(SearchProductTool searchProductTool, QueryOrdersTool ordersTool){
         registerTool(searchProductTool);
@@ -109,7 +113,11 @@ public class AgentServiceImpl implements AgentService {
             chatMessages.add(UserMessage.from(userMessage));
             //保存用户信息
             saveUserMessage(conversation.getId(),userMessage);
-
+            if(shouldCompress(chatMessages)){
+                log.info("[{}] MemoryCompressStart beforeSize={} estimatedChars={}",traceId,chatMessages.size(),chatMessages.stream().mapToInt(m->m.toString().length()).sum());
+                chatMessages = memoryCompressorService.compress(chatMessages,MAX_CHARS);
+                log.info("[{}] MemoryCompressEnd afterSize={} estimatedChars={}",traceId,chatMessages.size(),chatMessages.stream().mapToInt(m->m.toString().length()).sum());
+            }
             //3.ReAct循环 : 推理+执行
             int maxIteration=5;
             for(int i=0;i<maxIteration;i++){
@@ -127,11 +135,14 @@ public class AgentServiceImpl implements AgentService {
                     return "AI 服务暂时不可用，请稍后重试";
                 }
                 AiMessage aiMessage = chatResponse.aiMessage();
+                // 并发保护：当前 chatMessages 是请求级变量，ReAct 循环同步执行，无并发问题
+                // 若未来改为异步处理工具结果，需对 chatMessages 加锁或使用线程安全容器
                 chatMessages.add(aiMessage);
                 //保存 assistant 消息到数据库
-                saveAiMessage(conversation.getId(),aiMessage);
+                saveAiMessage(conversation.getId(),aiMessage,chatResponse.tokenUsage());
                 //没有工具调用，直接返回文本
                 if(!aiMessage.hasToolExecutionRequests()){
+                    saveAiMessage(conversation.getId(),aiMessage,chatResponse.tokenUsage());
                     TokenUsage tokenUsage = chatResponse.tokenUsage();
                     log.info("[{}] RequestEnd result=success token={}/{} total={}",
                             traceId,
@@ -143,8 +154,10 @@ public class AgentServiceImpl implements AgentService {
                 }
                 List<ToolExecutionRequest> requests = aiMessage.toolExecutionRequests();
                 log.info("[{}] ToolCallStart count={} tools={}",traceId,requests.size(),requests.stream().map(ToolExecutionRequest::name).toList());
+
                 //并发执行
                 List<ToolResult> toolResults = toolExecutor.execute(requests, toolInstances, traceId);
+
                 for (ToolResult toolResult : toolResults) {
                     String originalText = toolResult.getMessage().text();
                     String processedText = resultProcessor.process(toolResult.getMessage().toolName(), originalText);
@@ -181,7 +194,10 @@ public class AgentServiceImpl implements AgentService {
             });
         }
     }
-
+    private boolean shouldCompress(List<ChatMessage> messages){
+        int totalChars = messages.stream().mapToInt(m -> m.toString().length()).sum();
+        return totalChars>MAX_CHARS;
+    }
     @Override
     public AiConversation findOrCreateConversation(String threadId,Long userId) {
         AiConversation aiConversation = aiConversationMapper.selectOne(
@@ -201,7 +217,7 @@ public class AgentServiceImpl implements AgentService {
     }
 
     @Override
-    public void saveAiMessage(Long conversationId, AiMessage aiMessage) {
+    public void saveAiMessage(Long conversationId, AiMessage aiMessage,TokenUsage tokenUsage) {
         com.example.demo.model.entity.AiMessage aimessage=new com.example.demo.model.entity.AiMessage();
         aimessage.setConversationId(conversationId);
         aimessage.setRole("assistant");
@@ -211,9 +227,15 @@ public class AgentServiceImpl implements AgentService {
             aimessage.setToolCalls(toolCallsToJson(aiMessage.toolExecutionRequests()));
         }
         aimessage.setCreateTime(new Date());
-        aimessage.setPromptTokens(0);
-        aimessage.setCompletionTokens(0);
-        aimessage.setTotalTokens(0);
+        if (tokenUsage != null) {
+            aimessage.setPromptTokens(tokenUsage.inputTokenCount());
+            aimessage.setCompletionTokens(tokenUsage.outputTokenCount());
+            aimessage.setTotalTokens(tokenUsage.totalTokenCount());
+        } else {
+            aimessage.setPromptTokens(0);
+            aimessage.setCompletionTokens(0);
+            aimessage.setTotalTokens(0);
+        }
         aiMessageMapper.insert(aimessage);
     }
 

@@ -4,6 +4,7 @@ import com.example.demo.model.entity.AiConversation;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.model.output.TokenUsage;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
@@ -28,7 +29,7 @@ public interface AgentService {
     /**
      * 保存AI 消息
      */
-    public void saveAiMessage(Long conversationId, AiMessage aiMessage);
+    public void saveAiMessage(Long conversationId, AiMessage aiMessage, TokenUsage tokenUsage);
     /**
      * 保存用户消息
      */

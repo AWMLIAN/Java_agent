@@ -21,7 +21,7 @@ public class SearchProductTool {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @Tool("搜索商品。参数是一个JSON字符串，包含可选字段：keyword(商品名关键词), minPrice(最低价), maxPrice(最高价)。" +
+    @Tool("搜索商品。参数是一个JSON对象，包含可选字段：keyword(商品名关键词), minPrice(最低价), maxPrice(最高价)。" +
             "例如：{\"keyword\":\"手机\",\"minPrice\":100.0,\"maxPrice\":5000.0}。返回符合条件的前10个商品。")
     public String searchProducts(String argument){
         try {

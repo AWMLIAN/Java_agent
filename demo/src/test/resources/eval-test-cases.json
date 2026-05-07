@@ -1,0 +1,20 @@
+[
+  {
+    "id": 1,
+    "threadId": "eval-case01-202605071138",
+    "question": "帮我查询最近3个订单",
+    "mustContain": ["订单", "金额"],
+    "mustNotContain": ["抱歉", "无法查询"],
+    "expectedTool": "queryRecentOrders",
+    "shouldNotCall": ["searchProducts"]
+  },
+  {
+    "id": 2,
+    "threadId": "eval-case02-202605071138",
+    "question": "我想找价格在100到5000之间的手机",
+    "mustContain": ["商品", "价格"],
+    "mustNotContain": ["抱歉"],
+    "expectedTool": "searchProducts",
+    "shouldNotCall": ["queryRecentOrders"]
+  }
+]

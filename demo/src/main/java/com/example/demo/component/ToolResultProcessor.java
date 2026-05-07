@@ -69,7 +69,6 @@ public class ToolResultProcessor {
         return rawResult.substring(0,MAX_RESULT_LENGTH)
                 +String.format("\n...[结果已截断，共 %d 字符，完整数据已存档]]",rawResult.length());
     }
-
     //商品结构总结
     private String extractProductSummary(String toolName,String rawResult) {
         //名称，价格，库存

@@ -6,6 +6,7 @@ import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
@@ -22,14 +23,12 @@ public class ToolExecutor {
     private static final int TOOL_TIMEOUT_SECONDS=10;
 
     private final Semaphore semaphore=new Semaphore(MAX_CONCURRENT);
-    private final ExecutorService executor= new ThreadPoolExecutor(
-            MAX_CONCURRENT,
-            MAX_CONCURRENT,
-            60L,
-            TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(100),
-            new ThreadPoolExecutor.CallerRunsPolicy()
-    );
+
+    private final ExecutorService executor;
+
+    public ToolExecutor(@Qualifier("toolExecutorThreadPool") ExecutorService executor){
+        this.executor=executor;
+    }
     private final ObjectMapper mapper=new ObjectMapper();
 
     /**

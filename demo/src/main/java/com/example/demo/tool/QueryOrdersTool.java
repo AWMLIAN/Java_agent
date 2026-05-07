@@ -20,7 +20,7 @@ public class QueryOrdersTool {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @Tool("查询用户最近的订单。参数是一个JSON字符串，包含 userId(用户ID, 必填) 和 limit(返回条数, 可选, 默认5)。" +
+    @Tool("查询用户最近的订单。参数是一个JSON对象，包含 userId(用户ID, 必填) 和 limit(返回条数, 可选, 默认5)。" +
             "例如：{\"userId\":1,\"limit\":3}。返回订单列表。")
     public String queryRecentOrders(String arguments){
         try {

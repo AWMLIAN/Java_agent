@@ -50,13 +50,6 @@ public class AuthController {
         if(!userDetails.isEnabled()){
             throw new RuntimeException("用户被禁用");
         }
-//        UsernamePasswordAuthenticationToken authentication=new UsernamePasswordAuthenticationToken(
-//                userDetails,
-//                null,
-//                userDetails.getAuthorities()
-//        );
-//        SecurityContextHolder.getContext().setAuthentication(authentication);
-
         return jwtTokenUtil.generateToken(userDetails);
     }
 
