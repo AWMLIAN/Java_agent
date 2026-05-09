@@ -3,8 +3,8 @@ server:
 spring:
   datasource:
     url: jdbc:mysql://localhost:3306/mall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false
-    username: root
-    password: 121311
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
   data:
     redis:
       host: localhost
@@ -19,7 +19,7 @@ spring:
 langchain4j:
   open-ai:
     chat-model:
-      api-key: "sk-49412e1232c54ba8b8a40c854b3edf21"
+      api-key: ${DEEPSEEK_API_KEY}
       base-url: "https://api.deepseek.com"  #
       model-name: "deepseek-chat"
       log-requests: true
@@ -27,6 +27,6 @@ langchain4j:
 
 jwt:
   tokenHeader: Authorization #JWT存储的请求头
-  secret: bXlfamF2YV9hZ2VudF9teV9qYXZhX2FnZW50 #JWT加解密使用的密钥 my_java_agent_my_java_agent
+  secret: ${JWT_SECRET} #JWT加解密使用的密钥 my_java_agent_my_java_agent
   expiration: 604800 #JWT的超期限时间(60*60*24*7)
   tokenHead: 'Bearer '  #JWT负载中拿到开头
