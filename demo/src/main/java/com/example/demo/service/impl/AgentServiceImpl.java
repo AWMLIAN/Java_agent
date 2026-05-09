@@ -7,6 +7,7 @@ import com.example.demo.mapper.AiConversationMapper;
 import com.example.demo.mapper.AiMessageMapper;
 import com.example.demo.mapper.AiToolLogMapper;
 import com.example.demo.model.bo.AdminUserDetails;
+import com.example.demo.model.dto.AgentEvent;
 import com.example.demo.model.entity.AiConversation;
 import com.example.demo.model.entity.AiToolLog;
 import com.example.demo.service.AgentService;
@@ -30,6 +31,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+
+import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -83,7 +88,7 @@ public class AgentServiceImpl implements AgentService {
             //获取带有@Tool注解的方法
             if(method.isAnnotationPresent(Tool.class)){
                 Tool toolAnno=method.getAnnotation(Tool.class);
-                //声名工具
+                //声明工具
                 ToolSpecification spec=ToolSpecification.builder()
                         .name(method.getName())
                         .description(toolAnno.value()[0])
@@ -98,7 +103,7 @@ public class AgentServiceImpl implements AgentService {
     private String generateTraceId(){
         return "smartmall-"+UUID.randomUUID().toString().substring(0,8);
     }
-    private ReentrantLock acquireThread(String threadId){
+    private ReentrantLock acquireThreadLock(String threadId){
         RefCountedLock refLock=threadLocks.compute(threadId,(key,existing)->{
             if(existing==null){
                 return new RefCountedLock();
@@ -219,7 +224,7 @@ public class AgentServiceImpl implements AgentService {
     @Override
     public String chat(String threadId, String userMessage) {
         String traceId=generateTraceId();
-        ReentrantLock lock=acquireThread(threadId);
+        ReentrantLock lock=acquireThreadLock(threadId);
         try{
             log.info("[{}] RequestStart threadId={} message={}",traceId,threadId,userMessage);
             ChatContext ctx = buildChatContext(threadId, userMessage, traceId);
@@ -395,6 +400,102 @@ public class AgentServiceImpl implements AgentService {
             return null;
         }
     }
+
+    @Override
+    public void chatStream(String threadId, String userMessage, SseEmitter emitter) {
+        String traceId = generateTraceId();
+        ReentrantLock lock = acquireThreadLock(threadId);
+        try{
+            log.info("[{}] RequestStart threadId={} message={}", traceId, threadId, userMessage);
+            //加载历史
+            ChatContext ctx=buildChatContext(threadId,userMessage,traceId);
+            //流式输出
+            executeActLoopStream(ctx,traceId,emitter);
+            log.info("[{}] RequestEnd result=success", traceId);
+        }catch (Exception e){
+            log.error("[{}] ChatStreamError", traceId, e);
+            sendEvent(emitter,new AgentEvent("ERROR","服务器内部错误",null,System.currentTimeMillis()));
+        }finally {
+            lock.unlock();
+            releaseThreadLock(threadId);
+            emitter.complete();
+        }
+
+    }
+
+    private void sendEvent(SseEmitter emitter, AgentEvent agentEvent) {
+        try{
+            emitter.send(SseEmitter.event()
+                    .name(agentEvent.getType())
+                    .data(objectMapper.writeValueAsString(agentEvent)));
+        }catch (IOException e){
+            //客户端断开连接，忽略
+        }catch (Exception e){
+            log.warn("SSE send failed type={}",agentEvent.getType(),e);
+        }
+    }
+    //SSE版 ReAct循环：推理->事件推送->工具执行->事件推送->继续推送
+    private void executeActLoopStream(ChatContext ctx, String traceId, SseEmitter emitter) {
+        for(int i=0;i<MAX_ITERATIONS;i++){
+            ChatResponse chatResponse;
+            try{
+                ChatRequest chatRequest = ChatRequest.builder()
+                        .toolSpecifications(toolSpecifications)
+                        .messages(ctx.chatMessages)
+                        .build();
+                chatResponse = chatModel.chat(chatRequest);
+            }catch (Exception e){
+                log.error("[{}] LLMCallFailed error={}", traceId, e.getMessage());
+                sendEvent(emitter,new AgentEvent("ERROR","AI 服务暂时不可用，请稍后重试",null,System.currentTimeMillis()));
+                return;
+            }
+            AiMessage aiMessage = chatResponse.aiMessage();
+            ctx.chatMessages.add(aiMessage);
+            saveAiMessage(ctx.conversation.getId(),aiMessage,chatResponse.tokenUsage());
+            if(!aiMessage.hasToolExecutionRequests()){
+                String finalText = aiMessage.text();
+                sendEvent(emitter,new AgentEvent("FINAL_ANSWER",finalText,null,System.currentTimeMillis()));
+                TokenUsage tokenUsage=chatResponse.tokenUsage();
+                log.info("[{}] RequestEnd result=success token={}/{} total={}",
+                        traceId,
+                        tokenUsage.inputTokenCount(),
+                        tokenUsage.outputTokenCount(),
+                        tokenUsage.totalTokenCount());
+                return;
+            }
+            String thinkingText = aiMessage.text();
+            if(thinkingText!=null&&!thinkingText.isBlank()){
+                sendEvent(emitter,new AgentEvent("THINKING",thinkingText,null,System.currentTimeMillis()));
+            }else{
+                sendEvent(emitter,new AgentEvent("THINKING","正在分析您的需求...",null,System.currentTimeMillis()));
+            }
+            List<ToolExecutionRequest> requests = aiMessage.toolExecutionRequests();
+            log.info("[{}] ToolCallStart count={} tools={}", traceId, requests.size(),requests.stream().map(ToolExecutionRequest::name).toList());
+            //工具开始调用
+            for (ToolExecutionRequest request : requests) {
+                String startMsg="正在"+friendlyToolAction(request.name())+"...";
+                sendEvent(emitter,new AgentEvent("TOOL_CALL_START",startMsg,request.name(),System.currentTimeMillis()));
+            }
+            List<ToolResult> toolResults = toolExecutor.execute(requests, toolInstances, toolMethods, traceId);
+            handleToolResults(requests,toolResults,ctx.conversation.getId(),ctx.chatMessages);
+            for (ToolResult toolResult : toolResults) {
+                String toolName = toolResult.getMessage().toolName();
+                String processText = resultProcessor.process(toolName, toolResult.getMessage().text());
+                sendEvent(emitter,new AgentEvent("TOOL_CALL_END",processText,toolName,System.currentTimeMillis()));
+            }
+        }
+        log.warn("[{}] MaxIterationReached iterations={}", traceId, MAX_ITERATIONS);
+        sendEvent(emitter,new AgentEvent("ERROR", "抱歉，处理超时，请稍后再试", null, System.currentTimeMillis()));
+    }
+
+    private String friendlyToolAction(String name) {
+        return switch (name){
+            case "searchProducts"->"搜索商品";
+            case "queryRecentOrders" -> "查询订单";
+            default -> "执行查询";
+        };
+    }
+
     private Long getUserId(){
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if(auth!=null&& auth.getPrincipal() instanceof AdminUserDetails){

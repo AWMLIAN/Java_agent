@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Java Agent — 智能商城助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; height: 100vh; display: flex; flex-direction: column; }
+        .header { background: #1a1a2e; color: #fff; padding: 16px 24px; font-size: 18px; font-weight: 600; }
+        .header span { color: #e94560; }
+        #chat-container { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
+        .card { padding: 14px 18px; border-radius: 10px; border-left: 4px solid #ccc; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.08); animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .card.user { border-left-color: #16213e; background: #e8ecf4; }
+        .card.thinking { border-left-color: #3b82f6; background: #eff6ff; }
+        .card.tool-start { border-left-color: #f59e0b; background: #fffbeb; }
+        .card.tool-end { border-left-color: #10b981; background: #ecfdf5; }
+        .card.answer { border-left-color: #6366f1; background: #f5f3ff; }
+        .card.error { border-left-color: #ef4444; background: #fef2f2; }
+        .card .label { font-size: 12px; font-weight: 700; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px; }
+        .card.thinking .label { color: #3b82f6; }
+        .card.tool-start .label { color: #f59e0b; }
+        .card.tool-end .label { color: #10b981; }
+        .card.answer .label { color: #6366f1; }
+        .card.error .label { color: #ef4444; }
+        .card.user .label { color: #16213e; }
+        .card .content { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-wrap; word-break: break-word; }
+        .input-area { display: flex; padding: 16px 24px; background: #fff; border-top: 1px solid #e5e7eb; gap: 12px; }
+        .input-area input { flex: 1; padding: 12px 16px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; outline: none; }
+        .input-area input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.2); }
+        .input-area button { padding: 12px 28px; background: #1a1a2e; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+        .input-area button:hover { background: #16213e; }
+        .input-area button:disabled { background: #9ca3af; cursor: not-allowed; }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; color: #fff; font-size: 14px; z-index: 999; display: none; }
+        .toast.show { display: block; animation: fadeIn 0.3s ease; }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
+    </style>
+</head>
+<body>
+<div class="header">Java Agent <span>智能商城助手</span></div>
+<div id="toast" class="toast"></div>
+<div id="chat-container">
+    <div class="card answer">
+        <div class="label">系统</div>
+        <div class="content">欢迎使用智能商城助手！你可以问我商品搜索、订单查询等问题。</div>
+    </div>
+</div>
+<div class="input-area">
+    <input type="text" id="msgInput" placeholder="输入消息，例如：帮我查一下最近的订单" />
+    <button id="sendBtn" onclick="sendMessage()">发送</button>
+</div>
+
+<script>
+    const THREAD_ID = 'web-' + Date.now();
+    let token = localStorage.getItem('jwt_token') || '';
+
+    // 首次进入时要求输入 token
+    if (!token) {
+        const input = prompt('请输入 JWT Token（通过 /api/auth/login 获取）：');
+        if (input) {
+            token = input.trim();
+            localStorage.setItem('jwt_token', token);
+        }
+    }
+
+    function showToast(msg, type) {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.className = 'toast ' + type + ' show';
+        setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    function addCard(type, label, content) {
+        const container = document.getElementById('chat-container');
+        const existingToolStart = container.querySelector('.card.tool-start[data-tool-name="' + label + '"]');
+        // TOOL_CALL_END 替换对应 TOOL_CALL_START 卡片
+        if (type === 'tool-end' && existingToolStart) {
+            existingToolStart.className = 'card tool-end';
+            existingToolStart.querySelector('.label').textContent = '工具返回 ' + label;
+            existingToolStart.querySelector('.content').textContent = content;
+            return;
+        }
+        const card = document.createElement('div');
+        card.className = 'card ' + type;
+        if (type === 'tool-start') card.setAttribute('data-tool-name', label);
+        card.innerHTML = '<div class="label">' + label + '</div><div class="content">' + content + '</div>';
+        container.appendChild(card);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function sendMessage() {
+        const input = document.getElementById('msgInput');
+        const btn = document.getElementById('sendBtn');
+        const message = input.value.trim();
+        if (!message) return;
+        if (!token) { showToast('请先设置 JWT Token（刷新页面重新输入）', 'error'); return; }
+
+        addCard('user', '你', message);
+        input.value = '';
+        btn.disabled = true;
+        btn.textContent = '处理中...';
+
+        fetch('/api/agent/chat/stream', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + token
+            },
+            body: JSON.stringify({ threadId: THREAD_ID, message: message })
+        }).then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            function read() {
+                reader.read().then(({ done, value }) => {
+                    if (done) { btn.disabled = false; btn.textContent = '发送'; return; }
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // 解析 SSE 事件（格式：event: TYPE\ndata: {...}\n\n）
+                    const parts = buffer.split('\n\n');
+                    buffer = parts.pop() || ''; // 最后一个可能不完整
+
+                    for (const part of parts) {
+                        const eventMatch = part.match(/^event:\s*(.+)$/m);
+                        const dataMatch = part.match(/^data:\s*(.+)$/m);
+                        if (!eventMatch || !dataMatch) continue;
+
+                        const eventType = eventMatch[1];
+                        try {
+                            const event = JSON.parse(dataMatch[1]);
+                            switch (eventType) {
+                                case 'THINKING':
+                                    addCard('thinking', '思考中', event.content);
+                                    break;
+                                case 'TOOL_CALL_START':
+                                    addCard('tool-start', event.toolName || '工具调用', event.content);
+                                    break;
+                                case 'TOOL_CALL_END':
+                                    addCard('tool-end', event.toolName || '工具返回', event.content);
+                                    break;
+                                case 'FINAL_ANSWER':
+                                    addCard('answer', '回复', event.content);
+                                    break;
+                                case 'ERROR':
+                                    addCard('error', '错误', event.content);
+                                    break;
+                            }
+                        } catch (e) {
+                            console.warn('SSE parse error', e);
+                        }
+                    }
+                    read();
+                }).catch(err => {
+                    console.error('Read error', err);
+                    btn.disabled = false;
+                    btn.textContent = '发送';
+                });
+            }
+            read();
+        }).catch(err => {
+            showToast('请求失败: ' + err.message, 'error');
+            btn.disabled = false;
+            btn.textContent = '发送';
+        });
+    }
+
+    document.getElementById('msgInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') sendMessage();
+    });
+</script>
+</body>
+</html>

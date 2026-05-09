@@ -1,6 +1,7 @@
 package com.example.demo.config;
 
 import com.example.demo.filter.JwtAuthenticationTokenFilter;
+import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,7 +26,9 @@ public class SpringSecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity) throws Exception {
         httpSecurity.authorizeHttpRequests(
                 auth->auth
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         .requestMatchers("/api/auth/login").permitAll()
+                        .requestMatchers("/agent-chat.html").permitAll()
                         .requestMatchers("/api/agent/**").authenticated()
                         .requestMatchers("/api/admin/**").authenticated()
                         .requestMatchers("/api/ai/**").authenticated()

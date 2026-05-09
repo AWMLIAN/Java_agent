@@ -21,7 +21,7 @@ public interface AgentService {
     public String chat(String threadId,String userMessage);
 
     /**
-     * 找到已创建地会话
+     * 找到已创建的会话
      * @param threadId 会话线程ID
      */
     public AiConversation findOrCreateConversation(String threadId,Long userId);
@@ -50,4 +50,9 @@ public interface AgentService {
      * tool反序列化工具
      */
     public List<ToolExecutionRequest> parseToolCalls(String toolCallsJson);
+
+    /**
+     * SSE 流式聊天会话
+     */
+    public void chatStream(String threadId,String userMessage,SseEmitter emitter);
 }
