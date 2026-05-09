@@ -1,6 +1,7 @@
 package com.example.demo.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.demo.mapper.PmsProductMapper;
 import com.example.demo.model.entity.PmsProduct;
 import com.example.demo.service.ProductService;
@@ -31,7 +32,7 @@ public class ProductServiceImpl implements ProductService {
         if(maxPrice!=null){
             wrapper.le(PmsProduct::getPrice,maxPrice);
         }
-        wrapper.last("LIMIT 10");
-        return pmsProductMapper.selectList(wrapper);
+        Page<PmsProduct> page = new Page<>(1, 10);
+        return pmsProductMapper.selectPage(page,wrapper).getRecords();
     }
 }

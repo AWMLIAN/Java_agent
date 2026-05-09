@@ -1,18 +1,16 @@
 package com.example.demo.filter;
 
-import com.example.demo.mapper.UmsAdminMapper;
 import com.example.demo.model.bo.AdminUserDetails;
 import com.example.demo.service.UmsAdminService;
 import com.example.demo.utils.JwtTokenUtil;
-import jakarta.annotation.Resource;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -24,14 +22,16 @@ public class JwtAuthenticationTokenFilter extends OncePerRequestFilter {
     private JwtTokenUtil jwtTokenUtil;
     @Autowired
     private UmsAdminService umsAdminService;
+    @Value("${jwt.tokenHead}")
+    private String tokenHead;
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
         String authHeader = request.getHeader("Authorization");
-        if(authHeader==null||!authHeader.startsWith("Bearer")){
+        if(authHeader==null||!authHeader.startsWith(tokenHead.trim())){
             chain.doFilter(request,response);
             return;
         }
-        String token = authHeader.substring(7);
+        String token = authHeader.substring(tokenHead.trim().length());
         String userName = jwtTokenUtil.getUserNameFromToken(token);
         if(userName==null|| SecurityContextHolder.getContext().getAuthentication()!=null){
             chain.doFilter(request,response);

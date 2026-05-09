@@ -22,7 +22,7 @@ public interface AgentService {
 
     /**
      * 找到已创建地会话
-     * @prams threadId
+     * @param threadId 会话线程ID
      */
     public AiConversation findOrCreateConversation(String threadId,Long userId);
 

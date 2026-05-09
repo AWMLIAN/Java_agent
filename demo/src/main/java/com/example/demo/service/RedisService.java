@@ -10,7 +10,6 @@ import java.util.Set;
  * Redis操作Service
  * Created by macro on 2020/3/3.
  */
-@Service
 public interface RedisService {
 
     /**

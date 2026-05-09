@@ -1,32 +1,12 @@
-server:
-  port: 8080
 spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
   datasource:
     url: jdbc:mysql://localhost:3306/mall?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
-  data:
-    redis:
-      host: localhost
-      port: 6379
-      database: 0
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
 
-#mybatis-plus:
-#  mapper-locations:
-#    - classpath:dao/*.xml
-#    - classpath*:com/**/mapper/*.xml
-
-langchain4j:
-  open-ai:
-    chat-model:
-      api-key: ${DEEPSEEK_API_KEY}
-      base-url: "https://api.deepseek.com"  #
-      model-name: "deepseek-chat"
-      log-requests: true
-      log-responses: true
-
-jwt:
-  tokenHeader: Authorization #JWT存储的请求头
-  secret: ${JWT_SECRET} #JWT加解密使用的密钥 my_java_agent_my_java_agent
-  expiration: 604800 #JWT的超期限时间(60*60*24*7)
-  tokenHead: 'Bearer '  #JWT负载中拿到开头
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true

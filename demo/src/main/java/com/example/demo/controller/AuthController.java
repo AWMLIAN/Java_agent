@@ -2,8 +2,10 @@ package com.example.demo.controller;
 
 import cn.hutool.core.lang.Assert;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.demo.exception.BusinessException;
 import com.example.demo.mapper.UmsAdminMapper;
 import com.example.demo.model.bo.AdminUserDetails;
+import com.example.demo.model.dto.ApiResponse;
 import com.example.demo.model.dto.LoginRequest;
 import com.example.demo.model.entity.UmsAdmin;
 import com.example.demo.service.impl.UmsAdminServiceImpl;
@@ -36,21 +38,21 @@ public class AuthController {
     private JwtTokenUtil jwtTokenUtil;
 
     @PostMapping("/login")
-    public String login(@RequestBody LoginRequest request){
+    public ApiResponse<String> login(@RequestBody LoginRequest request){
         LambdaQueryWrapper<UmsAdmin> wrapper=new LambdaQueryWrapper<>();
         wrapper.eq(UmsAdmin::getUsername,request.getUsername());
         UmsAdmin admin = umsAdminMapper.selectOne(wrapper);
         if(admin==null){
-            throw new RuntimeException("用户不存在");
+            throw new BusinessException(401,"用户名或密码错误");
         }
         if(!passwordEncoder.matches(request.getPassword(),admin.getPassword())){
-            throw new RuntimeException("密码不正确");
+            throw new BusinessException(401,"用户名或密码错误");
         }
         AdminUserDetails userDetails = umsAdminService.loadUserByUserName(request.getUsername());
         if(!userDetails.isEnabled()){
-            throw new RuntimeException("用户被禁用");
+            throw new BusinessException(403,"账号已被禁用");
         }
-        return jwtTokenUtil.generateToken(userDetails);
+        return ApiResponse.ok(jwtTokenUtil.generateToken(userDetails));
     }
 
 }

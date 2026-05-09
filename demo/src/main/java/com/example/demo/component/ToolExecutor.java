@@ -38,6 +38,7 @@ public class ToolExecutor {
     public List<ToolResult> execute(
         List<ToolExecutionRequest> requests,
         Map<String,Object> toolInstances,
+        Map<String,Method> toolMethods,
         String traceId
     ){
         if(requests.isEmpty()){
@@ -56,7 +57,7 @@ public class ToolExecutor {
             CompletableFuture<ToolResult> executionFuture=futureByCacheKey.get(cacheKey);
             if(executionFuture==null){
                 executionFuture=CompletableFuture.supplyAsync(
-                        ()->executeSingle(req,toolInstances,traceId),executor
+                        ()->executeSingle(req,toolInstances,toolMethods,traceId),executor
                 );
                 futureByCacheKey.put(cacheKey,executionFuture);
             }else{
@@ -91,7 +92,7 @@ public class ToolExecutor {
         return results;
     }
 
-    private ToolResult executeSingle(ToolExecutionRequest request, Map<String, Object> toolInstances, String traceId) {
+    private ToolResult executeSingle(ToolExecutionRequest request, Map<String, Object> toolInstances,Map<String,Method> toolMethods, String traceId) {
 //      //获取一个线程资源，否则阻塞
         semaphore.acquireUninterruptibly();
         long start = System.currentTimeMillis();
@@ -104,15 +105,15 @@ public class ToolExecutor {
                         false, System.currentTimeMillis() - start);
             }
             //1，设置参数校验
-            String validationError = validateArgs(request.name(), request.arguments());
+            String validationError = validateArgs(traceId,request.name(), request.arguments());
             if(validationError!=null){
                 log.warn("[{}] ToolArgInvalid tool={} reason={}", traceId, request.name(), validationError);
                 return new ToolResult(request.id(),
                         buildFriendlyError(request.id(),request.name(), validationError),
                         false, System.currentTimeMillis() - start);
             }
-            //2.反射调用
-            Method method = tool.getClass().getMethod(request.name(), String.class);
+            //2.获取缓存
+            Method method=toolMethods.get(request.name());
             String rawResult = (String) method.invoke(tool, request.arguments());
             long timeMs = System.currentTimeMillis() - start;
             log.info("[{}] ToolEnd tool={} timeMs={} success=true",traceId,request.name(),timeMs);
@@ -132,7 +133,7 @@ public class ToolExecutor {
     /**
      * 参数前置校验，非法参数直接返回友好错误提示，避免无效下游调用
      */
-    private String validateArgs(String toolName,String arguments){
+    private String validateArgs(String traceId,String toolName,String arguments){
         if(arguments==null||arguments.isBlank()){
             return "工具参数不能为空";
         }
@@ -147,9 +148,9 @@ public class ToolExecutor {
                     return null;
             }
         }catch (Exception e){
-
+            log.warn("[{}] ToolArgParseFail tool={} arguments={} Exception={}", traceId,toolName, arguments,e.getMessage());
+            return "工具参数格式不正确，请检查JSON格式";
         }
-        return null;
     }
 
     private String validateQueryOrdersArgs(Map<String, Object> params) {

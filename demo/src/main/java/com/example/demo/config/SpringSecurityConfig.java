@@ -28,6 +28,7 @@ public class SpringSecurityConfig {
                         .requestMatchers("/api/auth/login").permitAll()
                         .requestMatchers("/api/agent/**").authenticated()
                         .requestMatchers("/api/admin/**").authenticated()
+                        .requestMatchers("/api/ai/**").authenticated()
                         .anyRequest().permitAll()
                 )
                 .csrf(csrf->csrf.disable())

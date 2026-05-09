@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD}
+
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: ${DEEPSEEK_API_KEY}
+      base-url: "https://api.deepseek.com"
+      model-name: "deepseek-chat"
+      log-requests: true
+      log-responses: true
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: 604800
+  tokenHead: 'Bearer'
+
+logging:
+  level:
+    com.example.demo: DEBUG

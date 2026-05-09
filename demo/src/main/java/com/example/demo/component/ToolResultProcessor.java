@@ -47,13 +47,13 @@ public class ToolResultProcessor {
         try {
             List<Map<String,Object>> items=mapper.readValue(rawResult, new TypeReference<>() {});
             StringBuilder sb=new StringBuilder();
-            sb.append(String.format("【%s查询结果】 查询时间：%s, 共%s条查询结果:\n "));
+            sb.append(String.format("【%s查询结果】 查询时间：%s, 共%s条查询结果:\n ",toolName,LocalDateTime.now().format(DT_FMT),items.size()));
             for (Map<String, Object> item : items) {
                 sb.append(String.format("id：%s,name:%s",
                         item.getOrDefault("id","N/A"),
                         item.getOrDefault("name","N/A")));
                 if(item.containsKey("description")){
-                    sb.append("description").append(item.get("description"));
+                    sb.append("description:").append(item.get("description"));
                 }
                 sb.append("\n");
             }

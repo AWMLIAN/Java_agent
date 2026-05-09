@@ -1,6 +1,7 @@
 package com.example.demo.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.demo.mapper.OmsOrderMapper;
 import com.example.demo.model.entity.OmsOrder;
 import com.example.demo.service.OrderService;
@@ -17,10 +18,10 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public List<OmsOrder> queryRecentOrders(Long userId, int limit) {
         LambdaQueryWrapper<OmsOrder> wrapper=new LambdaQueryWrapper();
+        Page<OmsOrder> page=new Page<>(1,Math.min(limit,20));
         wrapper.eq(OmsOrder::getMemberId,userId)
-                .orderByDesc(OmsOrder::getCreateTime)
-                .last("LIMIT "+Math.min(limit,20));
-        return omsOrderMapper.selectList(wrapper);
+                .orderByDesc(OmsOrder::getCreateTime);
+        return omsOrderMapper.selectPage(page,wrapper).getRecords();
     }
 
     @Override
