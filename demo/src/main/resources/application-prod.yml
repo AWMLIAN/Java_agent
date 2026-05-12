@@ -11,7 +11,12 @@ langchain4j:
       model-name: "deepseek-chat"
       log-requests: false
       log-responses: false
-
+  ollama:
+    embedding-model:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      model-name: ${OLLAMA_EMBEDDING_MODEL:bge-m3}
+      log-responses: false
+      timeout: 30s
 jwt:
   secret: ${JWT_SECRET}
   expiration: 604800

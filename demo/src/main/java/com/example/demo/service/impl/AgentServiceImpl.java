@@ -13,6 +13,7 @@ import com.example.demo.model.entity.AiToolLog;
 import com.example.demo.service.AgentService;
 import com.example.demo.service.MemoryCompressorService;
 import com.example.demo.tool.QueryOrdersTool;
+import com.example.demo.tool.SearchKnowledgeTool;
 import com.example.demo.tool.SearchProductTool;
 import com.fasterxml.jackson.core.type.TypeReference;
 import dev.langchain4j.agent.tool.Tool;
@@ -73,12 +74,11 @@ public class AgentServiceImpl implements AgentService {
     // 约 179,200 字符，作为触发压缩的字符阈值
     private static final int MAX_CHARS = 128_000 * 2 * 70 / 100;
     private static final int MAX_ITERATIONS=5;
-    public AgentServiceImpl(SearchProductTool searchProductTool, QueryOrdersTool ordersTool){
+    public AgentServiceImpl(SearchProductTool searchProductTool, QueryOrdersTool ordersTool, SearchKnowledgeTool searchKnowledgeTool){
         registerTool(searchProductTool);
         registerTool(ordersTool);
+        registerTool(searchKnowledgeTool);
     }
-
-
     //将所有工具声明到 toolSpecifications
     //将所有工具方法，建立方法名到类的映射
     @Override
@@ -149,48 +149,29 @@ public class AgentServiceImpl implements AgentService {
      * ReAct 循环：推理->工具执行->观察->继续推理
      */
     private String executeActLoop(ChatContext ctx,String traceId) {
-        //3.ReAct循环 : 推理+执行
-        for (int i = 0; i < MAX_ITERATIONS; i++) {
-            //发送请求并获取响应
-            ChatResponse chatResponse;
+        // 用数组做 holder，因为 lambda 内不能修改外部局部变量
+        String[] resultHolder = new String[1];
+        executeReActLoop(ctx, traceId, new ReActCallback() {
+            @Override
+            public void onThinking(String text) {}
 
-            try {
-                //构建消息请求，
-                ChatRequest chatRequest = ChatRequest.builder()
-                        .messages(ctx.chatMessages)
-                        .toolSpecifications(toolSpecifications)
-                        .build();
-                chatResponse = chatModel.chat(chatRequest);
-            } catch (Exception e) {
-                log.error("[{}] LLMCallFailed error={}", traceId, e.getMessage());
-                return "AI 服务暂时不可用，请稍后重试";
-            }
-            AiMessage aiMessage = chatResponse.aiMessage();
-            // 并发保护：当前 chatMessages 是请求级变量，ReAct 循环同步执行，无并发问题
-            // 若未来改为异步处理工具结果，需对 chatMessages 加锁或使用线程安全容器
-            ctx.chatMessages.add(aiMessage);
-            //保存 assistant 消息到数据库
-            saveAiMessage(ctx.conversation.getId(), aiMessage, chatResponse.tokenUsage());
-            //没有工具调用，直接返回文本
-            if (!aiMessage.hasToolExecutionRequests()) {
-                TokenUsage tokenUsage = chatResponse.tokenUsage();
-                log.info("[{}] RequestEnd result=success token={}/{} total={}",
-                        traceId,
-                        tokenUsage.inputTokenCount(),
-                        tokenUsage.outputTokenCount(),
-                        tokenUsage.totalTokenCount()
-                );
-                return aiMessage.text();
-            }
-            List<ToolExecutionRequest> requests = aiMessage.toolExecutionRequests();
-            log.info("[{}] ToolCallStart count={} tools={}", traceId, requests.size(), requests.stream().map(ToolExecutionRequest::name).toList());
+            @Override
+            public void onToolCallStart(ToolExecutionRequest request) {}
 
-            //并发执行
-            List<ToolResult> toolResults = toolExecutor.execute(requests, toolInstances, toolMethods,traceId);
-            handleToolResults(requests, toolResults, ctx.conversation.getId(), ctx.chatMessages);
-        }
-        log.warn("[{}] MaxIterationReached iterations={}",traceId,MAX_ITERATIONS);
-        return "抱歉，处理超时，请稍后再试";
+            @Override
+            public void onToolCallEnd(ToolResult result, String processedText) {}
+
+            @Override
+            public void onFinalAnswer(String text, TokenUsage tokenUsage) {
+                resultHolder[0]=text;
+            }
+
+            @Override
+            public void onError(String message) {
+                resultHolder[0]=message;
+            }
+        });
+        return resultHolder[0];
     }
 
     /**
@@ -414,7 +395,7 @@ public class AgentServiceImpl implements AgentService {
             log.info("[{}] RequestEnd result=success", traceId);
         }catch (Exception e){
             log.error("[{}] ChatStreamError", traceId, e);
-            sendEvent(emitter,new AgentEvent("ERROR","服务器内部错误",null,System.currentTimeMillis()));
+            sendEvent(emitter,new AgentEvent("ERROR","服务器内部错误",null,null,System.currentTimeMillis()));
         }finally {
             lock.unlock();
             releaseThreadLock(threadId);
@@ -436,64 +417,96 @@ public class AgentServiceImpl implements AgentService {
     }
     //SSE版 ReAct循环：推理->事件推送->工具执行->事件推送->继续推送
     private void executeActLoopStream(ChatContext ctx, String traceId, SseEmitter emitter) {
-        for(int i=0;i<MAX_ITERATIONS;i++){
-            ChatResponse chatResponse;
-            try{
-                ChatRequest chatRequest = ChatRequest.builder()
-                        .toolSpecifications(toolSpecifications)
-                        .messages(ctx.chatMessages)
-                        .build();
-                chatResponse = chatModel.chat(chatRequest);
-            }catch (Exception e){
-                log.error("[{}] LLMCallFailed error={}", traceId, e.getMessage());
-                sendEvent(emitter,new AgentEvent("ERROR","AI 服务暂时不可用，请稍后重试",null,System.currentTimeMillis()));
-                return;
+        executeReActLoop(ctx,traceId, new ReActCallback() {
+            @Override
+            public void onThinking(String text) {
+                sendEvent(emitter,new AgentEvent(
+                        "THINKING", text, null,null, System.currentTimeMillis()));
             }
-            AiMessage aiMessage = chatResponse.aiMessage();
-            ctx.chatMessages.add(aiMessage);
-            saveAiMessage(ctx.conversation.getId(),aiMessage,chatResponse.tokenUsage());
-            if(!aiMessage.hasToolExecutionRequests()){
-                String finalText = aiMessage.text();
-                sendEvent(emitter,new AgentEvent("FINAL_ANSWER",finalText,null,System.currentTimeMillis()));
-                TokenUsage tokenUsage=chatResponse.tokenUsage();
-                log.info("[{}] RequestEnd result=success token={}/{} total={}",
-                        traceId,
-                        tokenUsage.inputTokenCount(),
-                        tokenUsage.outputTokenCount(),
-                        tokenUsage.totalTokenCount());
-                return;
+
+            @Override
+            public void onToolCallStart(ToolExecutionRequest request) {
+                String startMsg = "正在" + friendlyToolAction(request.name()) + "...";
+                sendEvent(emitter, new AgentEvent("TOOL_CALL_START", startMsg, request.name(),request.id(), System.currentTimeMillis()));
             }
-            String thinkingText = aiMessage.text();
-            if(thinkingText!=null&&!thinkingText.isBlank()){
-                sendEvent(emitter,new AgentEvent("THINKING",thinkingText,null,System.currentTimeMillis()));
-            }else{
-                sendEvent(emitter,new AgentEvent("THINKING","正在分析您的需求...",null,System.currentTimeMillis()));
+
+            @Override
+            public void onToolCallEnd(ToolResult result, String processedText) {
+                sendEvent(emitter, new AgentEvent("TOOL_CALL_END", processedText, result.getMessage().toolName() ,result.getToolCallId(), System.currentTimeMillis()));
             }
-            List<ToolExecutionRequest> requests = aiMessage.toolExecutionRequests();
-            log.info("[{}] ToolCallStart count={} tools={}", traceId, requests.size(),requests.stream().map(ToolExecutionRequest::name).toList());
-            //工具开始调用
-            for (ToolExecutionRequest request : requests) {
-                String startMsg="正在"+friendlyToolAction(request.name())+"...";
-                sendEvent(emitter,new AgentEvent("TOOL_CALL_START",startMsg,request.name(),System.currentTimeMillis()));
+
+            @Override
+            public void onFinalAnswer(String text, TokenUsage tokenUsage) {
+                sendEvent(emitter, new AgentEvent("FINAL_ANSWER", text, null,null,  System.currentTimeMillis()));
             }
-            List<ToolResult> toolResults = toolExecutor.execute(requests, toolInstances, toolMethods, traceId);
-            handleToolResults(requests,toolResults,ctx.conversation.getId(),ctx.chatMessages);
-            for (ToolResult toolResult : toolResults) {
-                String toolName = toolResult.getMessage().toolName();
-                String processText = resultProcessor.process(toolName, toolResult.getMessage().text());
-                sendEvent(emitter,new AgentEvent("TOOL_CALL_END",processText,toolName,System.currentTimeMillis()));
+
+            @Override
+            public void onError(String message) {
+                sendEvent(emitter, new AgentEvent("ERROR", message, null, null, System.currentTimeMillis()));
             }
-        }
-        log.warn("[{}] MaxIterationReached iterations={}", traceId, MAX_ITERATIONS);
-        sendEvent(emitter,new AgentEvent("ERROR", "抱歉，处理超时，请稍后再试", null, System.currentTimeMillis()));
+        });
     }
 
     private String friendlyToolAction(String name) {
         return switch (name){
             case "searchProducts"->"搜索商品";
             case "queryRecentOrders" -> "查询订单";
+            case "searchKnowledge"->"搜索知识库";
             default -> "执行查询";
         };
+    }
+    private void executeReActLoop(ChatContext ctx,String traceId,ReActCallback callback){
+        for(int i=0;i<MAX_ITERATIONS;i++){
+            ChatResponse chatResponse;
+            try {
+                ChatRequest chatRequest = ChatRequest.builder()
+                        .toolSpecifications(toolSpecifications)
+                        .messages(ctx.chatMessages)
+                        .build();
+                chatResponse=chatModel.chat(chatRequest);
+            }catch (Exception e){
+                log.error("[{}] LLMCallFailed error={}", traceId, e.getMessage());
+                callback.onError("AI 服务暂时不可用，请稍后重试");
+                return;
+            }
+            AiMessage aiMessage = chatResponse.aiMessage();
+            saveAiMessage(ctx.conversation.getId(),aiMessage,chatResponse.tokenUsage());
+            ctx.chatMessages.add(aiMessage);
+            if(!aiMessage.hasToolExecutionRequests()){
+                TokenUsage tokenUsage = chatResponse.tokenUsage();
+                log.info("[{}] RequestEnd result=success token={}/{} total={}",
+                        traceId, tokenUsage.inputTokenCount(),
+                        tokenUsage.outputTokenCount(), tokenUsage.totalTokenCount());
+                callback.onFinalAnswer(aiMessage.text(),tokenUsage);
+                return;
+            }
+            // 思考中
+            String thinkingText = aiMessage.text();
+            if (thinkingText != null && !thinkingText.isBlank()) {
+                callback.onThinking(thinkingText);
+            } else {
+                callback.onThinking("正在分析您的需求...");
+            }
+
+            // 工具调用
+            List<ToolExecutionRequest> requests = aiMessage.toolExecutionRequests();
+            log.info("[{}] ToolCallStart count={} tools={}", traceId, requests.size(),
+                    requests.stream().map(ToolExecutionRequest::name).toList());
+            for (ToolExecutionRequest request : requests) {
+                callback.onToolCallStart(request);
+            }
+            //异步调用工具
+            List<ToolResult> toolResults = toolExecutor.execute(requests, toolInstances, toolMethods, traceId);
+            //寄生压缩
+            handleToolResults(requests, toolResults, ctx.conversation.getId(), ctx.chatMessages);
+            for (ToolResult toolResult : toolResults) {
+                String toolName = toolResult.getMessage().toolName();
+                String processedText = resultProcessor.process(toolName, toolResult.getMessage().text());
+                callback.onToolCallEnd(toolResult,processedText);
+            }
+        }
+        log.warn("[{}] MaxIterationReached iterations={}", traceId, MAX_ITERATIONS);
+        callback.onError("抱歉，处理超时，请稍后再试");
     }
 
     private Long getUserId(){
@@ -521,6 +534,13 @@ public class AgentServiceImpl implements AgentService {
     private static class ChatContext{
         final AiConversation conversation;
         final List<ChatMessage> chatMessages;
+    }
+    private interface ReActCallback{
+        void onThinking(String text);
+        void onToolCallStart(ToolExecutionRequest request);
+        void onToolCallEnd(ToolResult result, String processedText);
+        void onFinalAnswer(String text, TokenUsage tokenUsage);
+        void onError(String message);
     }
 
 }

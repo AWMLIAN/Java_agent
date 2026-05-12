@@ -93,6 +93,12 @@
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-ollama-spring-boot-starter</artifactId>
+            <version>1.3.0-beta9</version>
+        </dependency>
+
         <!--LangChain4j openAI-->
         <dependency>
             <groupId>dev.langchain4j</groupId>
@@ -100,12 +106,13 @@
             <version>1.3.0-beta9</version>
         </dependency>
 
-        <!--自动配置AI Service,RAG,Tools-->
+        <!--自动配置AI Service,RAG,Tools,ollama-->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-spring-boot-starter</artifactId>
             <version>1.3.0-beta9</version>
         </dependency>
+
 
         <!--Lombok 依赖-->
         <dependency>

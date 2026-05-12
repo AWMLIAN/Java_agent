@@ -72,20 +72,39 @@
         setTimeout(() => el.classList.remove('show'), 3000);
     }
 
-    function addCard(type, label, content) {
+    function addCard(type, toolName, toolCallId, content) {
         const container = document.getElementById('chat-container');
-        const existingToolStart = container.querySelector('.card.tool-start[data-tool-name="' + label + '"]');
-        // TOOL_CALL_END 替换对应 TOOL_CALL_START 卡片
-        if (type === 'tool-end' && existingToolStart) {
-            existingToolStart.className = 'card tool-end';
-            existingToolStart.querySelector('.label').textContent = '工具返回 ' + label;
-            existingToolStart.querySelector('.content').textContent = content;
-            return;
+
+        // TOOL_CALL_END: 用 toolCallId 精确定位对应的 TOOL_CALL_START 卡片
+        if (type === 'tool-end' && toolCallId) {
+            const existingToolStart = container.querySelector('.card.tool-start[data-tool-call-id="' + toolCallId + '"]');
+            if (existingToolStart) {
+                existingToolStart.className = 'card tool-end';
+                existingToolStart.querySelector('.label').textContent = '工具返回 ' + (toolName || '');
+                existingToolStart.querySelector('.content').textContent = content;
+                container.scrollTop = container.scrollHeight;
+                return;
+            }
         }
+
+        // 构建卡片 label 文本
+        var labelText = '';
+        switch (type) {
+            case 'user':      labelText = '你'; break;
+            case 'thinking':  labelText = '思考中'; break;
+            case 'tool-start':labelText = '工具调用 ' + (toolName || ''); break;
+            case 'tool-end':  labelText = '工具返回 ' + (toolName || ''); break;
+            case 'answer':    labelText = '回复'; break;
+            case 'error':     labelText = '错误'; break;
+            default:          labelText = type;
+        }
+
         const card = document.createElement('div');
         card.className = 'card ' + type;
-        if (type === 'tool-start') card.setAttribute('data-tool-name', label);
-        card.innerHTML = '<div class="label">' + label + '</div><div class="content">' + content + '</div>';
+        if (type === 'tool-start' && toolCallId) {
+            card.setAttribute('data-tool-call-id', toolCallId);
+        }
+        card.innerHTML = '<div class="label">' + labelText + '</div><div class="content">' + content + '</div>';
         container.appendChild(card);
         container.scrollTop = container.scrollHeight;
     }
@@ -97,7 +116,7 @@
         if (!message) return;
         if (!token) { showToast('请先设置 JWT Token（刷新页面重新输入）', 'error'); return; }
 
-        addCard('user', '你', message);
+        addCard('user', null,null, message);
         input.value = '';
         btn.disabled = true;
         btn.textContent = '处理中...';
@@ -134,19 +153,19 @@
                             const event = JSON.parse(dataMatch[1]);
                             switch (eventType) {
                                 case 'THINKING':
-                                    addCard('thinking', '思考中', event.content);
+                                    addCard('thinking', null, null, event.content);
                                     break;
                                 case 'TOOL_CALL_START':
-                                    addCard('tool-start', event.toolName || '工具调用', event.content);
+                                    addCard('tool-start', event.toolName, event.toolCallId, event.content);
                                     break;
                                 case 'TOOL_CALL_END':
-                                    addCard('tool-end', event.toolName || '工具返回', event.content);
+                                    addCard('tool-end', event.toolName, event.toolCallId, event.content);
                                     break;
                                 case 'FINAL_ANSWER':
-                                    addCard('answer', '回复', event.content);
+                                    addCard('answer', null, null, event.content);
                                     break;
                                 case 'ERROR':
-                                    addCard('error', '错误', event.content);
+                                    addCard('error', null, null, event.content);
                                     break;
                             }
                         } catch (e) {

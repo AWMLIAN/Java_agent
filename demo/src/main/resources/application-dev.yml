@@ -11,6 +11,17 @@ langchain4j:
       model-name: "deepseek-chat"
       log-requests: true
       log-responses: true
+    embedding-model:
+      api-key: ${SILICONFLOW_API_KEY}
+      base-url: https://api.siliconflow.cn/v1/
+      model-name: BAAI/bge-m3
+      log-requests: true
+      log-responses: false
+  ollama:
+    embedding-model:
+      enabled: false
+
+
 
 jwt:
   secret: ${JWT_SECRET:bXlfamF2YV9hZ2VudF9teV9qYXZhX2FnZW50}

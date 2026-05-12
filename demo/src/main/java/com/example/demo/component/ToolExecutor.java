@@ -20,7 +20,7 @@ import java.util.concurrent.*;
 public class ToolExecutor {
     private static final Logger log= LoggerFactory.getLogger(ToolExecutor.class);
     private static final int MAX_CONCURRENT=3;
-    private static final int TOOL_TIMEOUT_SECONDS=10;
+    private static final int TOOL_TIMEOUT_SECONDS=45;
 
     private final Semaphore semaphore=new Semaphore(MAX_CONCURRENT);
 
